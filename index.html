@@ -67,12 +67,16 @@ ul.list li:last-child{border-bottom:none}
 input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);flex:0 0 auto}
 input[type=date]{flex:0 0 150px}
 .empty{text-align:center;color:var(--muted);padding:20px 0}
+#notifBanner{position:fixed;left:12px;right:12px;bottom:76px;z-index:999;display:none;background:var(--card,#fff);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px}
+#notifBanner.show{display:block}
+#notifBanner .nbclose{float:right;background:none;border:none;font-size:16px;cursor:pointer;color:var(--muted)}
 </style>
 </head>
 <body>
 <header>
   <h1>📋 Планер</h1>
   <button id="themeBtn" title="Светлая/тёмная тема">🌙</button>
+  <button id="notifBtn" title="Уведомления вкл/выкл" onclick="notifToggle()">🔕</button>
 </header>
 <nav id="nav">
   <button data-tab="today">🏠 Сегодня</button>
@@ -87,6 +91,7 @@ input[type=date]{flex:0 0 150px}
   <button data-tab="farms">🌾 Хозяйства</button>
   <button data-tab="more">📊 Ещё</button>
 </nav>
+<div id="notifBanner"></div>
 <main>
 
 <!-- СЕГОДНЯ -->
@@ -229,6 +234,16 @@ input[type=date]{flex:0 0 150px}
 <!-- ЕЩЁ -->
 <section class="tab" id="tab-more">
   <div class="card">
+    <h2>🔔 Уведомления</h2>
+    <div id="notifStatus" class="muted" style="margin-bottom:8px"></div>
+    <div class="row">
+      <button class="btn primary" id="notifToggleBtn" onclick="notifToggle()">🔔 Включить</button>
+      <input type="time" id="notifTime" value="09:00" onchange="notifSetTime()">
+      <button class="btn" onclick="notifTest()">Проверить</button>
+    </div>
+    <div class="muted" style="margin-top:6px">Ежедневная сводка: звонки по хозяйствам и задачи на сегодня. Напоминание приходит, пока планер открыт (хоть в фоновой вкладке) — держите его закреплённым.</div>
+  </div>
+  <div class="card">
     <h2>📊 Статистика</h2>
     <div id="stats"></div>
   </div>
@@ -279,13 +294,17 @@ function renderToday(){
   const h=d.getHours();
   document.getElementById('todayGreet').textContent=(h<6?'Доброй ночи':h<12?'Доброе утро':h<18?'Добрый день':'Добрый вечер')+' 👋';
   document.getElementById('todayDate').textContent=d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})+', '+days[d.getDay()];
-  /* звонки: мои хозяйства + напоминания из справочника */
+  /* звонки: ваши хозяйства + напоминания из справочника */
   const t=todayISO(),farms=get('farms',[]);
-  const mine=farms.filter(f=>f.callDate&&f.callDate<=t).map(f=>({date:f.callDate,name:f.name,comment:f.comment,tel:null}));
-  const spr=(DB.sprCalls||[]).filter(c=>c.date<=t).map(c=>({date:c.date,name:c.name,comment:null,tel:c.tel,id:c.id,spr:true}));
-  const due=[...mine,...spr].sort((a,b)=>a.date.localeCompare(b.date));
+  let due=farms.filter(f=>f.callDate&&f.callDate<=t).map(f=>({name:f.name,comment:f.comment,date:f.callDate,farmId:f.id}));
+  const sc=DB.sprCalls||{};
+  for(const k in sc){if(sc[k]<=t){const si=SPR.findIndex(s=>sprKey(s)===k);if(si>=0)due.push({name:SPR[si][0],comment:(DB.sprNotes||{})[k]||'',date:sc[k],sprIdx:si,tel:SPR[si][6]});}}
+  due.sort((a,b)=>a.date.localeCompare(b.date));
   document.getElementById('todayCalls').innerHTML=due.length
-    ?due.map(f=>{const late=f.date<t;return `<li class="list"><div style="flex:1">${late?'🔴 ':'🟢 '}<b>${esc(f.name)}</b>${f.spr?' <span class="badge future">из справочника</span>':''} <span class="muted">— ${late?'просрочен с '+fmtDate(f.date):'сегодня'}</span>${f.comment?'<div class="muted">'+esc(f.comment)+'</div>':''}</div>${f.tel?`<a class="btn" href="tel:${esc(f.tel.replace(/[^+\d]/g,''))}">📞</a>`:''}${f.spr?`<button class="icon" title="Звонок сделан — убрать напоминание" onclick="sprCallDone('${f.id}')">✓</button>`:''}</li>`}).join('')
+    ?due.map(f=>{const late=f.date<t;
+      const tel=f.sprIdx!==undefined&&f.tel?`<a class="btn" href="tel:${esc(f.tel.replace(/[^+\d]/g,''))}">📞</a>`:'';
+      const done=f.farmId?`<button class="btn" onclick="callDone('${f.farmId}')">✓</button>`:`<button class="btn" onclick="callDoneSpr(${f.sprIdx})">✓</button>`;
+      return `<li class="list"><div style="flex:1">${late?'🔴 ':'🟢 '}<b>${esc(f.name)}</b>${f.sprIdx!==undefined?' <span class="badge future" style="font-size:11px">из справочника</span>':''} <span class="muted">— ${late?'просрочен с '+fmtDate(f.date):'сегодня'}</span>${f.date!==t?' <span class="muted">('+fmtDate(f.date)+')</span>':''}${f.comment?'<div class="muted">'+esc(f.comment)+'</div>':''}</div>${tel}${done}</li>`}).join('')
     :'<div class="empty">Звонков на сегодня нет 🎉</div>';
   /* задачи */
   const tasks=get('tasks',[]).filter(x=>!x.done&&(!x.date||x.date<=t)).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
@@ -368,7 +387,7 @@ timerMin.oninput=()=>{if(!tRun){tLeft=(parseInt(timerMin.value)||25)*60;timerSho
 function timerToggle(){
   if(tRun){clearInterval(tRun);tRun=null;timerStart.textContent='▶ Продолжить';return;}
   tRun=setInterval(()=>{
-    if(tLeft<=0){clearInterval(tRun);tRun=null;timerStart.textContent='▶ Старт';try{new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=').play().catch(()=>{});}catch(e){}alert('⏰ Время вышло!');tLeft=(parseInt(timerMin.value)||25)*60;timerShow();return;}
+    if(tLeft<=0){clearInterval(tRun);tRun=null;timerStart.textContent='▶ Старт';try{new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=').play().catch(()=>{});}catch(e){}notifSend('⏳ Таймер','Время вышло! Пора отдохнуть 🍅');alert('⏰ Время вышло!');tLeft=(parseInt(timerMin.value)||25)*60;timerShow();return;}
     tLeft--;timerShow();
   },1000);
   timerStart.textContent='⏸ Пауза';
@@ -418,9 +437,8 @@ function renderNotes(){
 function addFarm(){
   const n=farmName.value.trim();
   if(!n){alert('Укажите название хозяйства');return;}
-  const f={id:uid(),name:n,comment:farmComment.value.trim(),callDate:farmCallDate.value||null};
-  get('farms',[]).push(f);
-  syncFarmTask(f);
+  get('farms',[]).push({id:uid(),name:n,comment:farmComment.value.trim(),callDate:farmCallDate.value||null});
+  if(f.callDate)syncFarmTask(f);
   save();farmName.value='';farmComment.value='';farmCallDate.value='';
   renderFarms();
 }
@@ -449,46 +467,14 @@ function delFarm(id){if(!confirm('Удалить хозяйство?'))return;
   DB.tasks=(DB.tasks||[]).filter(x=>x.farmId!==id);
   DB.farms=DB.farms.filter(x=>x.id!==id);save();renderFarms();}
 
-function badgeFor(date){
-  if(!date)return '';
+function callBadge(f){
+  if(!f.callDate)return '';
   const t=todayISO();
-  if(date===t)return '<span class="badge today">📞 Звонить сегодня!</span>';
-  const diff=Math.round((new Date(date+'T00:00')-new Date(t+'T00:00'))/86400000);
-  if(diff>0)return `<span class="badge future">📞 через ${diff} дн. — ${fmtDate(date)}</span>`;
-  return `<span class="badge overdue">📞 просрочено на ${-diff} дн. — ${fmtDate(date)}</span>`;
+  if(f.callDate===t)return '<span class="badge today">📞 Звонить сегодня!</span>';
+  const diff=Math.round((new Date(f.callDate+'T00:00')-new Date(t+'T00:00'))/86400000);
+  if(diff>0)return `<span class="badge future">📞 через ${diff} дн. — ${fmtDate(f.callDate)}</span>`;
+  return `<span class="badge overdue">📞 просрочено на ${-diff} дн. — ${fmtDate(f.callDate)}</span>`;
 }
-function callBadge(f){return badgeFor(f.callDate);}
-
-/* ---------- СПРАВОЧНИК: звонки и комментарии (отдельно от списка хозяйств) ---------- */
-function findSprCall(x){return (DB.sprCalls||[]).find(c=>c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]);}
-function findSprNote(x){return (DB.sprNotes||[]).find(c=>c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]);}
-function persistSprComment(idx){
-  const x=SPR[idx];if(!x)return;
-  const el=document.getElementById('sc_'+idx);if(!el)return;
-  const v=el.value.trim();
-  DB.sprNotes=(DB.sprNotes||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
-  if(v)DB.sprNotes.push({id:uid(),name:x[0],reg:x[2],dist:x[3],text:v});
-}
-function saveSprComment(idx){persistSprComment(idx);save();renderSpr();}
-function delSprComment(idx){
-  const x=SPR[idx];if(!x)return;
-  DB.sprNotes=(DB.sprNotes||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
-  save();renderSpr();
-}
-function setSprCall(idx){
-  const x=SPR[idx];if(!x)return;
-  persistSprComment(idx);
-  const v=document.getElementById('scd_'+idx).value;
-  DB.sprCalls=(DB.sprCalls||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
-  if(v)DB.sprCalls.push({id:uid(),name:x[0],reg:x[2],dist:x[3],tel:x[6]||'',date:v});
-  save();renderSpr();
-}
-function delSprCall(idx){
-  const x=SPR[idx];if(!x)return;
-  DB.sprCalls=(DB.sprCalls||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
-  save();renderSpr();
-}
-function sprCallDone(id){DB.sprCalls=(DB.sprCalls||[]).filter(c=>c.id!==id);save();renderToday();}
 function renderFarms(){
   const t=todayISO(),arr=[...get('farms',[])];
   const due=arr.filter(f=>f.callDate&&f.callDate<t).length;
@@ -592,32 +578,155 @@ function renderSpr(){
   document.getElementById('sprList').innerHTML=list.slice(0,sprLimit).map((x,i)=>{
     const idx=SPR.indexOf(x);
     const tel=x[6]?`<a class="btn" href="tel:${esc(x[6].replace(/[^+\d]/g,''))}">📞 ${esc(x[6])}</a>`:'';
-    const c=findSprCall(x),myNote=findSprNote(x);
     return `<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
       <b>${esc(x[0])}</b>${tel}</div>
       <div class="muted">${esc(x[2])}, ${esc(x[3])}${x[4]?' · '+esc(x[4]):''}</div>
       ${x[1]?`<div style="margin-top:4px">${esc(x[1])}</div>`:''}
       ${x[7]?`<div class="muted" style="margin-top:2px">📍 ${esc(x[7])}</div>`:''}
       ${x[5]?`<div style="margin-top:4px;background:var(--hover,#f4f4f4);border-radius:8px;padding:6px">💬 ${esc(x[5])}</div>`:''}
-      <div class="row" style="margin-top:8px;align-items:center;flex-wrap:wrap">
-        ${x[6]?`<a class="btn primary" href="tel:${esc(x[6].replace(/[^+\d]/g,''))}">📞 Позвонить</a>`:'<span class="muted">📞 телефон не указан</span>'}
-        <label class="muted" style="flex:0 0 auto;align-self:center">Звонок:</label>
-        <input type="date" id="scd_${idx}" value="${c?c.date:''}" onchange="setSprCall(${idx})" style="flex:0 0 150px">
-        ${c?`<button class="icon" title="Убрать напоминание" onclick="delSprCall(${idx})">🗑</button>`:''}
-      </div>
-      ${c?badgeFor(c.date):''}
-      <div style="margin-top:8px">
-        ${myNote?'<div class="muted" style="margin-bottom:4px">📝 Мой комментарий</div>':''}
-        <textarea id="sc_${idx}" placeholder="Мой комментарий — хозяйство в список не добавляется">${esc(myNote?myNote.text:'')}</textarea>
-        <div class="row" style="margin-top:6px">
-          <button class="btn primary" onclick="saveSprComment(${idx})">💾 Сохранить комментарий</button>
-          ${myNote?`<button class="icon" title="Удалить комментарий" onclick="delSprComment(${idx})">🗑</button>`:''}
-        </div>
-      </div>
+      ${(function(){const k=sprKey(x),n=(DB.sprNotes||{})[k]||'';
+        return `<div style="margin-top:8px">
+          ${n?`<span class="badge future">📝 Мой комментарий</span>`:''}
+          <textarea id="sn_${idx}" placeholder="Мой комментарий (без добавления хозяйства)">${esc(n)}</textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="btn primary" onclick="saveSprNote(${idx})">💾 Сохранить комментарий</button>
+            ${n?`<button class="btn danger" onclick="delSprNote(${idx})">🗑 Удалить</button>`:''}
+          </div>
+        </div>`;
+      })()}
+      ${(function(){const k=sprKey(x),c=(DB.sprCalls||{})[k]||'';const t=todayISO();let badge='';
+        if(c){if(c===t)badge='<span class="badge today">📞 Звонить сегодня!</span>';
+          else{const diff=Math.round((new Date(c+'T00:00')-new Date(t+'T00:00'))/86400000);
+            badge=diff>0?`<span class="badge future">📞 через ${diff} дн. — ${fmtDate(c)}</span>`:`<span class="badge overdue">📞 просрочено на ${-diff} дн. — ${fmtDate(c)}</span>`;}}
+        return `<div style="margin-top:8px">${badge}
+          <div class="row">
+            ${x[6]?`<a class="btn primary" href="tel:${esc(x[6].replace(/[^+\d]/g,''))}">📞 Позвонить</a>`:'<span class="muted" style="align-self:center">телефон не указан</span>'}
+            <input type="date" id="scd_${idx}" value="${c}" title="Выбрать день звонка" onchange="saveSprCall(${idx})">
+            ${c?`<button class="btn danger" onclick="delSprCall(${idx})">🗑</button>`:''}
+          </div>
+          <div class="muted" style="margin-top:4px">Дата звонка — напоминание появится в списке «📞 Звонки по хозяйствам» на экране «Сегодня». Хозяйство в ваш список не добавляется.</div>
+        </div>`;})()}
     </div>`;
   }).join('')||'<div class="muted">Ничего не найдено</div>';
 }
+function sprKey(x){return (x[2]||'')+'|'+(x[3]||'')+'|'+x[0];}
+function saveSprNote(idx){
+  const x=SPR[idx];if(!x)return;
+  const t=document.getElementById('sn_'+idx).value.trim();
+  get('sprNotes',{});
+  if(t)DB.sprNotes[sprKey(x)]=t;else delete DB.sprNotes[sprKey(x)];
+  save();renderSpr();
+}
+function delSprNote(idx){
+  const x=SPR[idx];if(!x)return;
+  delete (DB.sprNotes||{})[sprKey(x)];
+  save();renderSpr();
+}
+function saveSprCall(idx){
+  const x=SPR[idx];if(!x)return;
+  const d=document.getElementById('scd_'+idx);
+  get('sprCalls',{});
+  const k=sprKey(x);
+  if(d&&d.value)DB.sprCalls[k]=d.value;else delete DB.sprCalls[k];
+  save();renderSpr();renderToday();notifSchedule();
+}
+function delSprCall(idx){
+  const x=SPR[idx];if(!x)return;
+  delete (DB.sprCalls||{})[sprKey(x)];
+  save();renderSpr();renderToday();
+}
+function callDoneSpr(idx){
+  const x=SPR[idx];if(!x)return;
+  delete (DB.sprCalls||{})[sprKey(x)];
+  save();renderToday();renderSpr();
+}
+
+/* ---------- УВЕДОМЛЕНИЯ ---------- */
+function notifState(){return DB.notif||(DB.notif={on:false,time:'09:00',last:''});}
+function notifSupported(){return 'Notification' in window;}
+function notifPerm(){return notifSupported()?Notification.permission:'unsupported';}
+function notifIconBtn(){const b=document.getElementById('notifBtn');if(b)b.textContent=notifState().on?'🔔':'🔕';}
+function notifRender(){
+  const st=notifState(),perm=notifPerm();
+  notifIconBtn();
+  const ti=document.getElementById('notifTime');if(ti)ti.value=st.time||'09:00';
+  const el=document.getElementById('notifStatus'),tb=document.getElementById('notifToggleBtn');
+  if(!el)return;
+  if(st.on){
+    let s='Уведомления включены — сводка каждый день в '+(st.time||'09:00');
+    if(perm==='granted')s+=' · системные уведомления разрешены';
+    else if(perm==='denied')s+=' · браузер запретил системные уведомления — напоминание будет баннером внутри планера';
+    else if(perm==='unsupported')s+=' · системные уведомления недоступны — напоминание будет баннером внутри планера';
+    el.textContent=s;if(tb)tb.textContent='🔕 Отключить';
+  }else{el.textContent='Уведомления выключены';if(tb)tb.textContent='🔔 Включить';}
+}
+function notifToggle(){
+  const st=notifState();
+  if(st.on){st.on=false;save();notifRender();return;}
+  st.on=true;save();
+  if(notifSupported()&&Notification.permission==='default'){
+    try{Notification.requestPermission().then(()=>{notifRender();notifCheck(true);});}catch(e){}
+  }
+  notifRender();notifSchedule();notifCheck(true);
+}
+function notifSetTime(){
+  const st=notifState();
+  st.time=document.getElementById('notifTime').value||'09:00';
+  st.last='';save();notifRender();notifSchedule();
+}
+function notifTest(){notifSend('🔔 Проверка уведомлений','Планер на связи — напоминания работают!');}
+function notifSummary(){
+  const t=todayISO();let due=[];
+  (DB.farms||[]).forEach(f=>{if(f.callDate&&f.callDate<=t)due.push(f.name+(f.callDate<t?' (просрочен с '+fmtDate(f.callDate)+')':''))});
+  const sc=DB.sprCalls||{};
+  for(const k in sc){if(sc[k]<=t){const si=SPR.findIndex(s=>sprKey(s)===k);if(si>=0)due.push(SPR[si][0]+' (из справочника)');}}
+  const tasks=(DB.tasks||[]).filter(x=>!x.done&&(!x.date||x.date<=t)).length;
+  let body=due.length
+    ?('Звонки: '+due.slice(0,3).join(', ')+(due.length>3?' и ещё '+(due.length-3):'')+'. ')
+    :'Звонков на сегодня нет. ';
+  body+=tasks?(tasks+' задач'+(tasks%10===1&&tasks%100!==11?'а':'ы')+' на сегодня'):'задач на сегодня нет';
+  return body;
+}
+function notifBanner(html){
+  const b=document.getElementById('notifBanner');if(!b)return;
+  b.innerHTML='<button class="nbclose" onclick="notifHide()">✕</button>'+html;
+  b.classList.add('show');
+  clearTimeout(notifBanner._t);
+  notifBanner._t=setTimeout(()=>b.classList.remove('show'),8000);
+}
+function notifHide(){const b=document.getElementById('notifBanner');if(b)b.classList.remove('show');}
+function notifSend(title,body){
+  const st=notifState();
+  if(st.on&&notifSupported()&&Notification.permission==='granted'){
+    try{new Notification(title,{body:body});}catch(e){}
+  }
+  if(navigator.vibrate){try{navigator.vibrate(200);}catch(e){}}
+  notifBanner('<b>'+esc(title)+'</b><br>'+esc(body));
+}
+function notifFire(){const st=notifState();st.last=todayISO();save();notifSend('📋 Планер — напоминание',notifSummary());}
+function notifCheck(force){
+  const st=notifState();if(!st.on)return;
+  if(!force&&st.last===todayISO())return;
+  const now=new Date(),p=(st.time||'09:00').split(':'),tg=new Date();
+  tg.setHours(+p[0],+(p[1]||0),0,0);
+  if(now>=tg)notifFire();
+}
+function notifSchedule(){
+  if(notifSchedule._t)clearTimeout(notifSchedule._t);
+  const st=notifState(),p=(st.time||'09:00').split(':');
+  const now=new Date(),tg=new Date();
+  tg.setHours(+p[0],+(p[1]||0),0,0);
+  if(tg<=now)tg.setDate(tg.getDate()+1);
+  notifSchedule._t=setTimeout(function(){notifCheck();notifSchedule();},Math.max(1000,tg-now)+500);
+}
+function notifInit(){
+  notifRender();
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)notifCheck();});
+  notifCheck();
+  notifSchedule();
+}
 initSpr();
+notifInit();
 
 </script>
 </body>
