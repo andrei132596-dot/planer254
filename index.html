@@ -63,7 +63,6 @@ ul.list li:last-child{border-bottom:none}
 .cal .day.today{outline:2px solid var(--accent)}
 .cal .day .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);position:absolute;bottom:4px}
 .cal .dow{font-size:11px;color:var(--muted);text-align:center}
-#timerDisplay{font-size:52px;text-align:center;font-variant-numeric:tabular-nums;margin:10px 0}
 .stat{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .stat:last-child{border:none}
 input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);flex:0 0 auto}
@@ -84,7 +83,7 @@ input[type=date]{flex:0 0 150px}
   <button data-tab="goals">◎ Цели</button>
   <button data-tab="money">₽ Деньги</button>
   <button data-tab="shop">🛒 Покупки</button>
-  <button data-tab="timer">⏳ Таймер</button>
+  <button data-tab="quality">🧪 Качество</button>
   <button data-tab="cal">🗓 Календарь</button>
   <button data-tab="notes">📝 Заметки</button>
   <button data-tab="farms">🌾 Хозяйства</button>
@@ -175,15 +174,66 @@ input[type=date]{flex:0 0 150px}
   </div>
 </section>
 
-<!-- ТАЙМЕР -->
-<section class="tab" id="tab-timer">
+<!-- КАЛЬКУЛЯТОР КАЧЕСТВА -->
+<section class="tab" id="tab-quality">
   <div class="card">
-    <h2>⏳ Таймер</h2>
-    <div class="row"><input type="number" id="timerMin" min="1" max="180" value="25"><button class="btn primary" id="timerStart" onclick="timerToggle()">▶ Старт</button><button class="btn" onclick="timerReset()">⟲ Сброс</button></div>
-    <div id="timerDisplay">25:00</div>
-    <div class="muted" style="text-align:center" id="timerHint">Помидорная техника: 25 минут работы, 5 минут отдыха</div>
+    <h2>🧮 Калькулятор качества</h2>
+    <div class="muted">Расчёт по образцу из Excel «Марков Алексей»: съёмы по шкалам, расхождение по качеству, цена фр/авто (условно зач. вес) и фр/элеватор. Все цифры можно править — пересчёт идёт на лету.</div>
+  </div>
+
+  <div class="card">
+    <h2>Качество базисное</h2>
+    <div class="row">
+      <label>Влажность, %<input type="number" id="qBwet" value="8" step="0.1"></label>
+      <label>Сорная примесь, %<input type="number" id="qBsor" value="3" step="0.1"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Масличная примесь, %<input type="number" id="qBmp" value="7" step="0.1"></label>
+      <label>Масличность, %<input type="number" id="qBmas" value="48" step="0.1"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Качество поставщика</h2>
+    <div class="row">
+      <label>Влажность, %<input type="number" id="qPwet" value="8" step="0.1"></label>
+      <label>Сорная примесь, %<input type="number" id="qPsor" value="6" step="0.1"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Масличная примесь, %<input type="number" id="qPmp" value="6" step="0.1"></label>
+      <label>Масличность, %<input type="number" id="qPmas" value="49" step="0.1"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Условия</h2>
+    <div class="row">
+      <label>Цена фр/хозяйство, ₽/т без НДС<input type="number" id="qPrice" value="21000"></label>
+      <label>Разновесы, ₽/т<input type="number" id="qRazn" value="45"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Расстояние, км<input type="number" id="qKm" value="42"></label>
+      <label>Доставка, ₽/т (по шкале, можно править)<input type="number" id="qDeliv"></label>
+      <label>Надбавка за масличность, ₽/т<input type="number" id="qNadb" value="0"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Итог</h2>
+    <div class="qres"><span>Съёмы</span><b id="qObyom">—</b></div>
+    <div class="qres"><span>Расхождение по качеству</span><b id="qRas">—</b></div>
+    <div class="qres"><span>Цена фр/авто (условно зач. вес)</span><b id="qAvto">—</b></div>
+    <div class="qres"><span>Доставка до элеватора</span><b id="qDelivOut">—</b></div>
+    <div class="qres"><span>Цена фр/элеватор, без НДС</span><b id="qElev">—</b></div>
+    <div class="qres"><span>Итог с надбавкой за масличность</span><b id="qTotal">—</b></div>
   </div>
 </section>
+
+<style>
+.qres{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.qres:last-child{border-bottom:none}
+.qres b{font-variant-numeric:tabular-nums}
+</style>
 
 <!-- КАЛЕНДАРЬ -->
 <section class="tab" id="tab-cal">
@@ -443,20 +493,48 @@ function renderShop(){
   ).join(''):'<div class="empty">Список пуст</div>';
 }
 
-/* ---------- ТАЙМЕР ---------- */
-let tLeft=25*60,tRun=null;
-function timerShow(){const m=Math.floor(tLeft/60),s=tLeft%60;timerDisplay.textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
-timerMin.oninput=()=>{if(!tRun){tLeft=(parseInt(timerMin.value)||25)*60;timerShow();}};
-function timerToggle(){
-  if(tRun){clearInterval(tRun);tRun=null;timerStart.textContent='▶ Продолжить';return;}
-  tRun=setInterval(()=>{
-    if(tLeft<=0){clearInterval(tRun);tRun=null;timerStart.textContent='▶ Старт';try{new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=').play().catch(()=>{});}catch(e){}notify('⏰ Время вышло!','Пора на перерыв');alert('⏰ Время вышло!');tLeft=(parseInt(timerMin.value)||25)*60;timerShow();return;}
-    tLeft--;timerShow();
-  },1000);
-  timerStart.textContent='⏸ Пауза';
+/* ---------- КАЛЬКУЛЯТОР КАЧЕСТВА ---------- */
+const qScale=[
+  [0,25,650],[26,50,800],[51,75,900],[76,100,1050],[101,125,1150],[126,150,1250],
+  [151,175,1350],[176,200,1500],[201,225,1600],[226,250,1750],[251,275,1900],
+  [276,300,2050],[301,325,2150],[326,350,2250],[351,400,2350],[401,450,2500],
+  [451,500,2700],[501,550,2900],[551,600,3200]
+];
+const qV=id=>parseFloat(document.getElementById(id).value)||0;
+function qScaleDelivery(km){
+  const r=qScale.find(r=>km>=r[0]&&km<=r[1]);
+  return r?r[2]:null; // null = "не предусмотрено"
 }
-function timerReset(){if(tRun)clearInterval(tRun);tRun=null;tLeft=(parseInt(timerMin.value)||25)*60;timerStart.textContent='▶ Старт';timerShow();}
-timerShow();
+function calcQuality(){
+  const price=qV('qPrice'),razn=qV('qRazn'),km=qV('qKm');
+  // съёмы по шкалам из Excel
+  let s=0;
+  const wet=qV('qPwet'),sor=qV('qPsor'),mp=qV('qPmp');
+  const bWet=qV('qBwet'),bSor=qV('qBsor'),bMp=qV('qBmp');
+  if(wet>bWet) s+=(wet<=12?1:wet<=16?1.5:2)*(wet-bWet);
+  if(sor>bSor) s+=(sor<=8?1:1.5)*(sor-bSor);
+  if(mp>bMp)   s+=0.2*(mp-bMp);
+  const ras=price*s/100;
+  const avto=price+ras+razn;
+  const deliv=qV('qDeliv');
+  const elev=avto+deliv;
+  const total=elev+qV('qNadb');
+  document.getElementById('qObyom').textContent=s.toFixed(2)+' %';
+  document.getElementById('qRas').textContent=Math.round(ras).toLocaleString('ru-RU')+' ₽/т';
+  document.getElementById('qAvto').textContent=Math.round(avto).toLocaleString('ru-RU')+' ₽/т';
+  document.getElementById('qDelivOut').textContent=Math.round(deliv).toLocaleString('ru-RU')+' ₽/т';
+  document.getElementById('qElev').textContent=Math.round(elev).toLocaleString('ru-RU')+' ₽/т';
+  document.getElementById('qTotal').textContent=Math.round(total).toLocaleString('ru-RU')+' ₽/т';
+}
+function qDelivByKm(){
+  const km=qV('qKm'),d=qScaleDelivery(km);
+  document.getElementById('qDeliv').value=d===null?'':d;
+  calcQuality();
+}
+['qBwet','qBsor','qBmp','qBmas','qPwet','qPsor','qPmp','qPmas','qPrice','qRazn','qDeliv','qNadb']
+  .forEach(id=>document.getElementById(id).addEventListener('input',calcQuality));
+document.getElementById('qKm').addEventListener('input',qDelivByKm);
+qDelivByKm();
 
 /* ---------- КАЛЕНДАРЬ ---------- */
 let calY=new Date().getFullYear(),calM=new Date().getMonth(),calSel=null;
