@@ -279,11 +279,13 @@ function renderToday(){
   const h=d.getHours();
   document.getElementById('todayGreet').textContent=(h<6?'Доброй ночи':h<12?'Доброе утро':h<18?'Добрый день':'Добрый вечер')+' 👋';
   document.getElementById('todayDate').textContent=d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})+', '+days[d.getDay()];
-  /* звонки */
+  /* звонки: мои хозяйства + напоминания из справочника */
   const t=todayISO(),farms=get('farms',[]);
-  const due=farms.filter(f=>f.callDate&&f.callDate<=t).sort((a,b)=>a.callDate.localeCompare(b.callDate));
+  const mine=farms.filter(f=>f.callDate&&f.callDate<=t).map(f=>({date:f.callDate,name:f.name,comment:f.comment,tel:null}));
+  const spr=(DB.sprCalls||[]).filter(c=>c.date<=t).map(c=>({date:c.date,name:c.name,comment:null,tel:c.tel,id:c.id,spr:true}));
+  const due=[...mine,...spr].sort((a,b)=>a.date.localeCompare(b.date));
   document.getElementById('todayCalls').innerHTML=due.length
-    ?due.map(f=>{const late=f.callDate<t;return `<li class="list"><div style="flex:1">${late?'🔴 ':'🟢 '}<b>${esc(f.name)}</b> <span class="muted">— ${late?'просрочен с '+fmtDate(f.callDate):'сегодня'}</span>${f.comment?'<div class="muted">'+esc(f.comment)+'</div>':''}</div></li>`}).join('')
+    ?due.map(f=>{const late=f.date<t;return `<li class="list"><div style="flex:1">${late?'🔴 ':'🟢 '}<b>${esc(f.name)}</b>${f.spr?' <span class="badge future">из справочника</span>':''} <span class="muted">— ${late?'просрочен с '+fmtDate(f.date):'сегодня'}</span>${f.comment?'<div class="muted">'+esc(f.comment)+'</div>':''}</div>${f.tel?`<a class="btn" href="tel:${esc(f.tel.replace(/[^+\d]/g,''))}">📞</a>`:''}${f.spr?`<button class="icon" title="Звонок сделан — убрать напоминание" onclick="sprCallDone('${f.id}')">✓</button>`:''}</li>`}).join('')
     :'<div class="empty">Звонков на сегодня нет 🎉</div>';
   /* задачи */
   const tasks=get('tasks',[]).filter(x=>!x.done&&(!x.date||x.date<=t)).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
@@ -416,8 +418,9 @@ function renderNotes(){
 function addFarm(){
   const n=farmName.value.trim();
   if(!n){alert('Укажите название хозяйства');return;}
-  get('farms',[]).push({id:uid(),name:n,comment:farmComment.value.trim(),callDate:farmCallDate.value||null});
-  if(f.callDate)syncFarmTask(f);
+  const f={id:uid(),name:n,comment:farmComment.value.trim(),callDate:farmCallDate.value||null};
+  get('farms',[]).push(f);
+  syncFarmTask(f);
   save();farmName.value='';farmComment.value='';farmCallDate.value='';
   renderFarms();
 }
@@ -446,14 +449,46 @@ function delFarm(id){if(!confirm('Удалить хозяйство?'))return;
   DB.tasks=(DB.tasks||[]).filter(x=>x.farmId!==id);
   DB.farms=DB.farms.filter(x=>x.id!==id);save();renderFarms();}
 
-function callBadge(f){
-  if(!f.callDate)return '';
+function badgeFor(date){
+  if(!date)return '';
   const t=todayISO();
-  if(f.callDate===t)return '<span class="badge today">📞 Звонить сегодня!</span>';
-  const diff=Math.round((new Date(f.callDate+'T00:00')-new Date(t+'T00:00'))/86400000);
-  if(diff>0)return `<span class="badge future">📞 через ${diff} дн. — ${fmtDate(f.callDate)}</span>`;
-  return `<span class="badge overdue">📞 просрочено на ${-diff} дн. — ${fmtDate(f.callDate)}</span>`;
+  if(date===t)return '<span class="badge today">📞 Звонить сегодня!</span>';
+  const diff=Math.round((new Date(date+'T00:00')-new Date(t+'T00:00'))/86400000);
+  if(diff>0)return `<span class="badge future">📞 через ${diff} дн. — ${fmtDate(date)}</span>`;
+  return `<span class="badge overdue">📞 просрочено на ${-diff} дн. — ${fmtDate(date)}</span>`;
 }
+function callBadge(f){return badgeFor(f.callDate);}
+
+/* ---------- СПРАВОЧНИК: звонки и комментарии (отдельно от списка хозяйств) ---------- */
+function findSprCall(x){return (DB.sprCalls||[]).find(c=>c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]);}
+function findSprNote(x){return (DB.sprNotes||[]).find(c=>c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]);}
+function persistSprComment(idx){
+  const x=SPR[idx];if(!x)return;
+  const el=document.getElementById('sc_'+idx);if(!el)return;
+  const v=el.value.trim();
+  DB.sprNotes=(DB.sprNotes||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
+  if(v)DB.sprNotes.push({id:uid(),name:x[0],reg:x[2],dist:x[3],text:v});
+}
+function saveSprComment(idx){persistSprComment(idx);save();renderSpr();}
+function delSprComment(idx){
+  const x=SPR[idx];if(!x)return;
+  DB.sprNotes=(DB.sprNotes||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
+  save();renderSpr();
+}
+function setSprCall(idx){
+  const x=SPR[idx];if(!x)return;
+  persistSprComment(idx);
+  const v=document.getElementById('scd_'+idx).value;
+  DB.sprCalls=(DB.sprCalls||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
+  if(v)DB.sprCalls.push({id:uid(),name:x[0],reg:x[2],dist:x[3],tel:x[6]||'',date:v});
+  save();renderSpr();
+}
+function delSprCall(idx){
+  const x=SPR[idx];if(!x)return;
+  DB.sprCalls=(DB.sprCalls||[]).filter(c=>!(c.name===x[0]&&c.reg===x[2]&&c.dist===x[3]));
+  save();renderSpr();
+}
+function sprCallDone(id){DB.sprCalls=(DB.sprCalls||[]).filter(c=>c.id!==id);save();renderToday();}
 function renderFarms(){
   const t=todayISO(),arr=[...get('farms',[])];
   const due=arr.filter(f=>f.callDate&&f.callDate<t).length;
@@ -557,27 +592,30 @@ function renderSpr(){
   document.getElementById('sprList').innerHTML=list.slice(0,sprLimit).map((x,i)=>{
     const idx=SPR.indexOf(x);
     const tel=x[6]?`<a class="btn" href="tel:${esc(x[6].replace(/[^+\d]/g,''))}">📞 ${esc(x[6])}</a>`:'';
+    const c=findSprCall(x),myNote=findSprNote(x);
     return `<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
       <b>${esc(x[0])}</b>${tel}</div>
       <div class="muted">${esc(x[2])}, ${esc(x[3])}${x[4]?' · '+esc(x[4]):''}</div>
       ${x[1]?`<div style="margin-top:4px">${esc(x[1])}</div>`:''}
       ${x[7]?`<div class="muted" style="margin-top:2px">📍 ${esc(x[7])}</div>`:''}
       ${x[5]?`<div style="margin-top:4px;background:var(--hover,#f4f4f4);border-radius:8px;padding:6px">💬 ${esc(x[5])}</div>`:''}
-      <button class="btn primary" style="margin-top:8px" onclick="addFromSpr(${idx})">➕ В мои хозяйства</button>
+      <div class="row" style="margin-top:8px;align-items:center;flex-wrap:wrap">
+        ${x[6]?`<a class="btn primary" href="tel:${esc(x[6].replace(/[^+\d]/g,''))}">📞 Позвонить</a>`:'<span class="muted">📞 телефон не указан</span>'}
+        <label class="muted" style="flex:0 0 auto;align-self:center">Звонок:</label>
+        <input type="date" id="scd_${idx}" value="${c?c.date:''}" onchange="setSprCall(${idx})" style="flex:0 0 150px">
+        ${c?`<button class="icon" title="Убрать напоминание" onclick="delSprCall(${idx})">🗑</button>`:''}
+      </div>
+      ${c?badgeFor(c.date):''}
+      <div style="margin-top:8px">
+        ${myNote?'<div class="muted" style="margin-bottom:4px">📝 Мой комментарий</div>':''}
+        <textarea id="sc_${idx}" placeholder="Мой комментарий — хозяйство в список не добавляется">${esc(myNote?myNote.text:'')}</textarea>
+        <div class="row" style="margin-top:6px">
+          <button class="btn primary" onclick="saveSprComment(${idx})">💾 Сохранить комментарий</button>
+          ${myNote?`<button class="icon" title="Удалить комментарий" onclick="delSprComment(${idx})">🗑</button>`:''}
+        </div>
+      </div>
     </div>`;
   }).join('')||'<div class="muted">Ничего не найдено</div>';
-}
-function addFromSpr(idx){
-  const x=SPR[idx];if(!x)return;
-  if((DB.farms||[]).some(f=>f.name.trim().toLowerCase()===x[0].trim().toLowerCase())){
-    if(!confirm('Хозяйство «'+x[0]+'» уже в вашем списке. Добавить ещё раз?'))return;
-  }
-  (DB.farms||(DB.farms=[])).unshift({id:uid(),name:x[0],comment:x[5]||'',callDate:null});
-  save();renderFarms();
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.querySelector('#tab-farms').classList.add('active');
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='farms'));
-  window.scrollTo({top:0,behavior:'smooth'});
 }
 initSpr();
 
